@@ -1,0 +1,12 @@
+
+
+# Create CloudFormation stack
+aws cloudformation create-stack --stack-name Udemy-DE-01-KF-04 --template-body file://20200434_CF_EC2_Firehose.yaml  --parameters file://startmyinstance-parameters.json  --capabilities CAPABILITY_IAM
+
+
+# Update CloudFormation stack
+#aws cloudformation update-stack --stack-name Udemy-DE-01-KF-04 --template-body file://20200434_CF_EC2_Firehose.yaml  --parameters file://startmyinstance-parameters.json --capabilities CAPABILITY_IAM
+
+
+# Delete CloudFormation stack
+#aws cloudformation delete-stack --stack-name Udemy-DE-01-KF-04

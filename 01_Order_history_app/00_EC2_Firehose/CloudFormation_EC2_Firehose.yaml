@@ -1,0 +1,201 @@
+# StackName: Udemy-DE-01-KF-01
+
+
+---
+Parameters:
+  # SecurityGroupDescription:
+    # Description: Security Group Description
+    # Type: String
+  KeyName:
+    Description:
+      Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type:
+      AWS::EC2::KeyPair::KeyName
+    ConstraintDescription:
+      Must be the name of an existing EC2 KeyPair.
+  AgentJsonPath:
+    Description:
+      Agent.json path for Kinesis Firehose
+    Type:
+      String
+    ConstraintDescription:
+      Must be the Key S3 file name of the CloudFormation parameters.
+    
+
+Resources:
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      AvailabilityZone: us-east-1a
+      ImageId: ami-a4c7edb2
+      InstanceType: t2.micro
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      SecurityGroups:
+        - !Ref SSHSecurityGroup
+        - !Ref FirehoseSecurityGroup
+      KeyName: !Ref KeyName
+      Tags: 
+        - Key: Name
+          Value: !Ref AWS::StackName
+      UserData : 
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            sudo yum install -y aws-kinesis-agent
+            cd /home/ec2-user/
+            #sudo wget http://media.sundog-soft.com/AWSBigData/LogGenerator.zip -O /home/ec2-user/LogGenerator_tmp.zip 
+            #sudo unzip /home/ec2-user/LogGenerator_tmp.zip -d /home/ec2-user/
+            wget http://media.sundog-soft.com/AWSBigData/LogGenerator.zip
+            unzip LogGenerator.zip
+            chmod a+x LogGenerator.py
+            sudo mkdir /var/log/cadabra
+            aws s3 cp ${AgentJsonPath}  /etc/aws-kinesis/agent.json
+            sudo service aws-kinesis-agent start
+            sudo chkconfig aws-kinesis-agent on
+            sudo python LogGenerator.py 500000
+    DependsOn:
+      - KinesisFirehoseDeliveryStream
+
+  EC2InstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Path: /
+      Roles:
+        - !Ref EC2InstanceProfileRole
+  EC2Policy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: EC2Policy
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action:
+              - cloudwatch:GetMetricStatistics
+              - cloudwatch:ListMetrics
+              - cloudwatch:PutMetricData
+              - ec2:DescribeTags
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - firehose:DeleteDeliveryStream
+              - firehose:PutRecord
+              - firehose:PutRecordBatch
+              - firehose:UpdateDestination
+            Resource:
+              - !GetAtt KinesisFirehoseDeliveryStream.Arn
+          - Effect: Allow
+            Action:
+              - 's3:List*'
+              - 's3:Get*'
+            Resource: '*'
+      Roles:
+        - !Ref EC2InstanceProfileRole
+  EC2InstanceProfileRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          # Allows Amazon EC2 to work on your behalf:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+            
+  # an elastic IP for our instance
+  # MyEIP:
+  #   Type: AWS::EC2::EIP
+  #   Properties:
+  #     InstanceId: !Ref MyInstance
+
+  # our EC2 security group
+  SSHSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH access via port 22
+      SecurityGroupIngress:
+      - CidrIp: 0.0.0.0/0
+        FromPort: 22
+        IpProtocol: tcp
+        ToPort: 22
+
+  # our second EC2 security group
+  FirehoseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      # GroupDescription: !Ref SecurityGroupDescription
+      GroupDescription: CF_EC2_Firehose
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: 192.168.1.1/32
+
+
+  KinesisFirehoseDeliveryStream:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Properties:
+      # DeliveryStreamName: PurchaseLogs
+      DeliveryStreamName: !Join
+        - '-'
+        - - !Ref AWS::StackName
+          - PurchaseLogs
+      DeliveryStreamType: DirectPut
+      S3DestinationConfiguration:
+        BucketARN: arn:aws:s3:::npedernera-orderlogs-sundogedu
+        BufferingHints:
+          IntervalInSeconds: 60
+          SizeInMBs: 5
+        CloudWatchLoggingOptions:
+          Enabled: 'false'
+        CompressionFormat: UNCOMPRESSED
+        EncryptionConfiguration:
+          NoEncryptionConfig: NoEncryption
+        RoleARN: !GetAtt FirehoseDeliveryIAMRole.Arn
+    DependsOn:
+      - FirehoseDeliveryIAMPolicy
+  FirehoseDeliveryIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ''
+            Effect: Allow
+            Principal:
+              Service: firehose.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref AWS::AccountId
+  FirehoseDeliveryIAMPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      # PolicyName: firehose_delivery_role
+      PolicyName: !Join
+        - ''
+        - - !Ref AWS::StackName
+          - firehose_delivery_role
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:AbortMultipartUpload
+              - s3:GetBucketLocation
+              - s3:GetObject
+              - s3:ListBucket
+              - s3:ListBucketMultipartUploads
+              - s3:PutObject
+            Resource:
+              - arn:aws:s3:::npedernera-orderlogs-sundogedu*
+              - arn:aws:s3:::npedernera-orderlogs-sundogedu/*
+      Roles:
+        - !Ref FirehoseDeliveryIAMRole
